@@ -53,16 +53,20 @@ ruta en `SUMATRA_EXE` del `.env`.
 > gráfico, y en un servidor sin nadie delante el trabajo se queda esperando a que alguien cierre un
 > diálogo que nadie ve. No falla: se cuelga, que es peor.
 
-## 3. El token (dónde va)
+## 3. La clave (token): una por computadora
 
-Es **un solo secreto escrito en dos sitios**:
+**Cada computadora con el servicio tiene su propia clave.** Se escribe en dos sitios:
 
-| Dónde | Variable |
+| Dónde | Qué |
 |---|---|
 | `C:\servicios-pvv\impresora\.env` (este equipo) | `IMPRESORA_TOKEN=...` |
-| `.env` del panel | `IMPRESORA_TOKEN=...` (el mismo valor) |
+| Panel → **Ajustes → Servicios de impresión** (de la empresa dueña de este equipo) | la misma clave, con la dirección de este equipo |
 
-Generarlo una vez, en la máquina del panel:
+Nada de esto va en el `.env` del panel: el panel es de varias empresas, y cada una apunta allí
+**solo sus** computadoras. Una clave abre una sola computadora, y la de una empresa no sirve para
+imprimir en la de otra.
+
+Generar una clave **nueva para cada computadora**:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
@@ -70,7 +74,9 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 
 - **No** reutilizar ningún otro token (el del reloj, el del lector de placas…): son puertas
   distintas, y si una se filtra las otras siguen cerradas.
-- **No** va en la base de datos, ni en `data/`, ni en el repositorio (`.env` está en `.gitignore`).
+- **No** se reutiliza entre computadoras: si una se filtra o se jubila un equipo, se cambia solo esa.
+- **No** va en el repositorio (`.env` está en `.gitignore`). En el panel se guarda de solo
+  escritura: después de guardarla, la pantalla solo enseña sus 4 últimas letras.
 - Si falta o mide menos de 20 caracteres, el servicio responde **503** a todo: una variable
   olvidada cierra la puerta, no la abre.
 
@@ -83,16 +89,20 @@ IMPRESORA_PUERTO=8766
 # SUMATRA_EXE=...                 ← solo si SumatraPDF.exe no está en esta carpeta
 ```
 
-Y en el `.env` del panel:
+Y en el panel, entrando con la empresa dueña de este equipo: **Ajustes → Servicios de impresión →
+«+ Agregar una computadora»**:
 
-```
-IMPRESORA_URL=http://10.147.x.x:8766   ← la misma IP de ZeroTier de este equipo
-IMPRESORA_TOKEN=...
-```
+- **Nombre:** cómo la conoce la gente («Caja 1», «Servidor del taller»).
+- **Dirección:** `10.147.x.x:8766` (la IP de ZeroTier de este equipo y el puerto).
+- **Clave:** la misma `IMPRESORA_TOKEN` de arriba.
 
-**El panel se reinicia** para leer las variables nuevas. Sin ellas el temporizador ni se enciende
-(lo dice en el arranque: «la impresión programada queda apagada») y la pantalla de Impresiones
-avisa en amarillo.
+Guardar y pulsar **«Probar»**: tiene que decir «Contesta …». No hace falta reiniciar el panel.
+Si la empresa tiene varias computadoras, la marcada **«Por defecto»** es la que usan las
+impresiones programadas; en cada impresora de factura se puede elegir otra.
+
+> **Villa Lubri (empresa principal):** mientras no se agregue aquí, el panel sigue usando
+> `IMPRESORA_URL` / `IMPRESORA_TOKEN` de su `.env` como respaldo. Aparece en la lista como
+> «Servidor del taller (.env)». Ninguna otra empresa puede usar ese respaldo.
 
 ## 4. Abrir el puerto en el cortafuegos de Windows (solo para ZeroTier)
 

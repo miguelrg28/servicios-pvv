@@ -125,9 +125,12 @@ La guía completa, con todos los comandos, está en
 
 1. Instalar Python y bajar este repositorio en `C:\servicios-pvv`.
 2. Preparar la carpeta `impresora` (su venv y su archivo `.env` con la **clave**).
-3. Poner la misma **clave** y la dirección del equipo en el panel.
+3. En el panel, **Ajustes → Servicios de impresión**, agregar esta computadora con su dirección
+   de ZeroTier y la misma **clave**, y pulsar **"Probar"**. Cada computadora tiene **su propia
+   clave**, y cada empresa ve y usa solo las suyas.
 4. Dejarlo prendido solo con el **Programador de tareas**.
-5. En el panel, **Ajustes → Impresión de facturas**, elegir **"Por el servicio de impresión"** y el
+5. En el panel, **Ajustes → Impresión de facturas**, elegir **"Por el servicio de impresión"**, la
+   **computadora** y el
    **idioma** de la impresora: **Star** para la SP500, **ESC/POS** para casi todas las térmicas.
 
 ---
