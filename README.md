@@ -5,6 +5,9 @@ Son **generales**: no saben nada de ninguna empresa en concreto, así que cualqu
 panel los puede instalar. Lo que es de un solo negocio (el reloj de asistencia y el lector de
 placas de Villa Lubri) sigue en su propio repositorio (`bridge-punch-villalubri`).
 
+> **¿Solo quieres que la factura salga por la impresora de la caja?** Lee el
+> **[Manual fácil](MANUAL.md)**: paso a paso, sin palabras técnicas.
+
 | Carpeta | Qué hace | Guía |
 |---|---|---|
 | [`impresora/`](impresora/) | Saca por las impresoras del equipo lo que manda el panel, sin ventanas: PDF y tickets de factura en crudo (Star, ESC/POS). | [INSTALACION.md](impresora/INSTALACION.md) |
