@@ -5,11 +5,26 @@ Corre en una computadora Windows de la empresa —el servidor o la caja— y sac
 lo que le manda el panel, sin abrir ventanas. Es general: lo puede instalar cualquier empresa del
 panel; no sabe nada de ninguna en concreto.
 
-Dos puertas:
-  · POST /imprimir        → un PDF (la hoja del cuadre, una factura en carta…), con SumatraPDF.
-  · POST /imprimir-crudo  → bytes en el idioma de una impresora de recibos (Star Line Mode,
-                            ESC/POS): tickets de factura, con corte y gaveta. RAW por win32print.
-Y dos de consulta: GET /salud y GET /impresoras.
+Dos formas de recibir trabajo, y la segunda es la que hay que usar en una caja
+--------------------------------------------------------------------------
+1. **El panel llama aquí** (modo de siempre). Levanta un servidor con dos puertas:
+     · POST /imprimir        → un PDF (la hoja del cuadre, una factura en carta…), con SumatraPDF.
+     · POST /imprimir-crudo  → bytes en el idioma de una impresora de recibos (Star Line Mode,
+                               ESC/POS): tickets de factura, con corte y gaveta. RAW por win32print.
+   Y dos de consulta: GET /salud y GET /impresoras.
+   Exige que el panel pueda ALCANZAR esta máquina: o sea, ZeroTier.
+
+2. **Esto llama al panel** (`PANEL_URL` en el `.env`). Sale una petición por HTTPS a la misma
+   dirección que se abre en el navegador y se queda esperando; cuando hay papel, el panel contesta
+   con el trabajo, aquí se imprime y se le dice qué pasó.
+
+   Por qué existe: una caja no tiene por qué estar en la red privada de la empresa. Meterla ahí
+   para imprimir un ticket le da de paso alcance al ERP y a la base de datos, y una caja es el
+   equipo más expuesto de una tienda. Saliendo no hace falta abrir ningún puerto ni entrar en
+   ninguna red: no hay nada que vigilar.
+
+Las dos pueden convivir, y de hecho comparten todo lo de abajo: cambia de dónde llega el trabajo,
+no cómo se imprime.
 
 Por qué el horario NO está aquí
 -------------------------------
@@ -37,11 +52,14 @@ import platform
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.2"
+VERSION = "1.3"
 AQUI = Path(__file__).resolve().parent
 
 # Un PDF de una hoja pesa 100 kB. El tope está por si alguien manda un documento de doscientas
@@ -78,6 +96,23 @@ _cargar_env()
 TOKEN = _limpiar(os.environ.get("IMPRESORA_TOKEN"))
 SUMATRA = _limpiar(os.environ.get("SUMATRA_EXE")) or str(AQUI / "SumatraPDF.exe")
 EQUIPO = platform.node() or "servidor"
+
+# ── Modo «esto llama al panel» ──
+# La dirección del panel de la empresa, la misma que se abre en el navegador. Vacío = modo de
+# siempre (el panel llama aquí) y no se sale a ninguna parte.
+PANEL_URL = _limpiar(os.environ.get("PANEL_URL")).rstrip("/")
+# Qué computadora es, según el panel: sale en Ajustes → Servicios de impresión.
+SERVICIO_ID = _limpiar(os.environ.get("SERVICIO_ID"))
+
+# El panel deja la espera abierta unos 25 s; el margen es para que el corte lo dé él y no nosotros.
+TIMEOUT_ESPERA = 40
+TIMEOUT_REPORTE = 20
+# Al fallar la red se espera cada vez un poco más, hasta un minuto: una caja sin internet no puede
+# convertirse en mil peticiones por minuto contra el panel.
+ESPERA_MIN, ESPERA_MAX = 2, 60
+# Las impresoras no cambian cada 25 s. Se recuerdan unos minutos para no preguntarle a Windows en
+# cada vuelta.
+CACHE_IMPRESORAS = 300
 
 
 # ──────────────────────────── Las impresoras del equipo ────────────────────────────
@@ -230,6 +265,200 @@ def imprimir_crudo(datos: bytes, impresora: str, copias: int, nombre: str) -> tu
             pass
 
 
+# ──────────────────── Modo «esto llama al panel» (la cola) ────────────────────
+#
+# El panel no puede llamar a una caja, y es justo lo que se quiere: una caja no tiene por qué estar
+# en la red privada de la empresa. Así que se invierte el sentido. Esto es todo el mecanismo:
+#
+#   1. POST {PANEL_URL}/api/cola-impresion/esperar   → se queda abierta hasta ~25 s.
+#        · 204          = no hay nada; se vuelve a preguntar.
+#        · 200 {trabajo}= hay papel.
+#   2. Se imprime con las mismas funciones de arriba.
+#   3. POST {PANEL_URL}/api/cola-impresion/<id>/hecho → qué pasó. Al otro lado hay alguien
+#      esperando para decirle a una persona «salió» o «no salió, y por esto».
+#
+# La clave es la misma de siempre (IMPRESORA_TOKEN), y la empresa la dice el subdominio de
+# PANEL_URL. No hay una segunda credencial que mantener.
+
+_impresoras_cache = {"cuando": 0.0, "lista": []}
+
+
+def _impresoras_para_el_panel():
+    """
+    Las impresoras de este equipo, recordadas unos minutos.
+
+    Van en CADA espera porque en este modo el panel no puede preguntarlas: al revés no se puede
+    llamar, que es el punto de todo esto. Con ellas, la pantalla de Ajustes sigue pudiendo ofrecer
+    la lista para elegir cuál usar.
+    """
+    ahora = time.time()
+    if ahora - _impresoras_cache["cuando"] > CACHE_IMPRESORAS:
+        _impresoras_cache["lista"] = listar_impresoras()
+        _impresoras_cache["cuando"] = ahora
+    return _impresoras_cache["lista"]
+
+
+def _al_panel(ruta, cuerpo, timeout, metodo="POST"):
+    """Una llamada al panel. Devuelve el JSON, o None si contestó 204 (nada que hacer)."""
+    datos = json.dumps(cuerpo, ensure_ascii=False).encode("utf-8") if cuerpo is not None else None
+    peticion = urllib.request.Request(
+        f"{PANEL_URL}{ruta}",
+        data=datos,
+        method=metodo,
+        headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "Content-Type": "application/json; charset=utf-8",
+            # Sin esto, un proxy por medio puede quedarse con la respuesta vacía del 204.
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(peticion, timeout=timeout) as r:
+        if r.status == 204:
+            return None
+        crudo = r.read().decode("utf-8") or "{}"
+        return json.loads(crudo)
+
+
+def _imprimir_trabajo(trabajo):
+    """Saca el papel. Devuelve (salió, explicación) igual que las funciones de arriba."""
+    try:
+        # Los espacios y saltos se quitan antes de validar: hay codificadores que parten la cadena
+        # en renglones, y eso no es un documento mal codificado, es el mismo documento con pinta
+        # distinta. Rechazarlo costaría una visita al taller por nada.
+        limpio = "".join((trabajo.get("datos_base64") or "").split())
+        datos = base64.b64decode(limpio, validate=True)
+    except Exception:
+        return False, "El documento no venía bien codificado."
+    if not datos:
+        return False, "El trabajo venía vacío."
+
+    nombre = str(trabajo.get("nombre") or "documento")
+    impresora = str(trabajo.get("impresora") or "").strip()
+    copias = trabajo.get("copias") or 1
+
+    if trabajo.get("tipo") == "crudo":
+        return imprimir_crudo(datos, impresora, copias, nombre)
+
+    if not datos.startswith(b"%PDF"):
+        return False, "Eso no es un PDF."
+    # A un temporal y se borra siempre: en la caja no se queda tirado el cuadre de cada día.
+    tmp = Path(tempfile.gettempdir()) / f"vl-{int(time.time() * 1000)}.pdf"
+    try:
+        tmp.write_bytes(datos)
+        return imprimir_pdf(tmp, impresora, copias)
+    finally:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+
+
+def _una_vuelta():
+    """Pregunta, imprime si hay algo, y cuenta qué pasó. Devuelve True si hubo trabajo."""
+    respuesta = _al_panel(
+        "/api/cola-impresion/esperar",
+        {"equipo": EQUIPO, "version": VERSION, "impresoras": _impresoras_para_el_panel()},
+        TIMEOUT_ESPERA,
+    )
+    trabajo = (respuesta or {}).get("trabajo")
+    if not trabajo:
+        return False
+
+    arranque = time.time()
+    try:
+        ok, detalle = _imprimir_trabajo(trabajo)
+    except Exception as e:
+        ok, detalle = False, str(e)[:200]
+    ms = int((time.time() - arranque) * 1000)
+    print(f"[impresora] {'✔' if ok else '✖'} {trabajo.get('nombre')} (cola) → {detalle} ({ms} ms)")
+
+    # Que el papel saliera y no se pueda avisar es el único fallo de verdad feo de todo esto: al
+    # otro lado hay alguien mirando la pantalla. Por eso el aviso va en su propio try, y si no
+    # llega se dice con todas las letras.
+    try:
+        _al_panel(
+            f"/api/cola-impresion/{trabajo.get('id')}/hecho",
+            {"ok": bool(ok), "detalle": str(detalle)[:300], "impresora": detalle if ok else "", "ms": ms},
+            TIMEOUT_REPORTE,
+        )
+    except Exception as e:
+        print(f"[impresora] El papel salió pero no se pudo avisar al panel: {e}", file=sys.stderr)
+    return True
+
+
+def _saludar_al_panel():
+    """
+    Una llamada al arrancar para que el log diga de una vez si esto está bien puesto.
+
+    Sin ella, un `.env` con la dirección equivocada se ve como «no sale el papel» días después. Y
+    de paso avisa si el SERVICIO_ID no es el de la clave: quien manda es la clave, así que esto
+    seguiría funcionando igual, pero un `.env` armado a medias entre dos computadoras es justo lo
+    que acaba en «¿por qué imprime en la caja 2?».
+    """
+    try:
+        d = _al_panel("/api/cola-impresion/", None, 20, metodo="GET") or {}
+    except urllib.error.HTTPError as e:
+        cuerpo = ""
+        try:
+            cuerpo = json.loads(e.read().decode("utf-8")).get("mensaje", "")
+        except Exception:
+            pass
+        print(f"[impresora] El panel contestó {e.code} al saludar: {cuerpo or 'sin detalle'}", file=sys.stderr)
+        return
+    except Exception as e:
+        print(f"[impresora] No se pudo saludar al panel: {str(e)[:160]}", file=sys.stderr)
+        return
+
+    servicio = d.get("servicio") or {}
+    print(f"[impresora] Conectado al panel de «{d.get('empresa')}» como «{servicio.get('nombre')}».")
+    if SERVICIO_ID and servicio.get("id") and SERVICIO_ID != servicio.get("id"):
+        print(
+            f"[impresora] AVISO: el SERVICIO_ID del .env ({SERVICIO_ID}) no es el de esta clave "
+            f"({servicio.get('id')}). Manda la clave, así que se imprimirá igual, pero revisa el .env.",
+            file=sys.stderr,
+        )
+
+
+def trabajar_con_el_panel():
+    """
+    El bucle. Vive en su propio hilo para que el servidor de arriba siga atendiendo si alguien lo
+    usa, y porque así una caída de internet no se lleva por delante nada más.
+    """
+    espera = ESPERA_MIN
+    _saludar_al_panel()
+    print(f"[impresora] Esperando trabajo de {PANEL_URL} como «{SERVICIO_ID}»...")
+    while True:
+        try:
+            # Una vuelta con trabajo encadena con la siguiente sin pausa: si hay tres tickets en
+            # cola, salen los tres seguidos y no uno cada 25 segundos.
+            _una_vuelta()
+            espera = ESPERA_MIN
+        except urllib.error.HTTPError as e:
+            cuerpo = ""
+            try:
+                cuerpo = json.loads(e.read().decode("utf-8")).get("mensaje", "")
+            except Exception:
+                pass
+            if e.code in (401, 403):
+                # Reintentar más rápido no va a cambiar la clave. Se dice claro y se baja el ritmo.
+                print(
+                    f"[impresora] El panel rechazó la credencial ({e.code}): {cuerpo or 'sin detalle'}\n"
+                    f"            Revisa IMPRESORA_TOKEN y SERVICIO_ID contra Ajustes → Servicios de impresión.",
+                    file=sys.stderr,
+                )
+                espera = ESPERA_MAX
+            else:
+                print(f"[impresora] El panel contestó {e.code}: {cuerpo or 'sin detalle'}", file=sys.stderr)
+                espera = min(ESPERA_MAX, espera * 2)
+            time.sleep(espera)
+        except Exception as e:
+            # Sin internet, el panel reiniciándose, un corte de la espera... nada de esto merece un
+            # rastro de pila de veinte líneas cada dos segundos en el impresora.log.
+            print(f"[impresora] Sin conexión con el panel ({type(e).__name__}): {str(e)[:120]}", file=sys.stderr)
+            time.sleep(espera)
+            espera = min(ESPERA_MAX, espera * 2)
+
+
 # ──────────────────────────────── El servidor ────────────────────────────────
 
 def _manejador():
@@ -375,14 +604,49 @@ def main():
     # Dónde escuchar sale del `.env`, como en el lector de placas: el .bat que lanza la tarea
     # programada no sabe leer un `.env`, así que si esto no viniera de aquí habría que escribir la
     # IP de ZeroTier dentro del .bat — y entonces cambiar de red obligaría a editar dos archivos.
+    #
+    # Con PANEL_URL puesto, el valor por defecto pasa a ser 127.0.0.1 y no 0.0.0.0. Una caja que
+    # sale a buscar su trabajo no tiene por qué dejar un puerto abierto a la red de la tienda, y
+    # el que instala no tiene por qué acordarse de cerrarlo: lo seguro tiene que ser lo que pasa
+    # cuando nadie toca nada.
+    escuchar_env = _limpiar(os.environ.get("IMPRESORA_ESCUCHAR"))
     ap = argparse.ArgumentParser(description="Servicio de impresión (servicios-pvv).")
-    ap.add_argument("--escuchar", default=_limpiar(os.environ.get("IMPRESORA_ESCUCHAR")) or "0.0.0.0")
+    ap.add_argument("--escuchar", default=escuchar_env or ("127.0.0.1" if PANEL_URL else "0.0.0.0"))
     ap.add_argument("--puerto", type=int, default=int(_limpiar(os.environ.get("IMPRESORA_PUERTO")) or 8766))
+    ap.add_argument(
+        "--sin-servidor", action="store_true",
+        default=_limpiar(os.environ.get("IMPRESORA_SERVIDOR")) in ("0", "no", "false"),
+        help="No levantar el servidor: solo salir a buscar trabajo al panel (hace falta PANEL_URL).",
+    )
     args = ap.parse_args()
 
     if len(TOKEN) < 20:
         print("AVISO: IMPRESORA_TOKEN no está puesto (o es corto). El servicio responderá 503.")
     print(f"Equipo: {EQUIPO} · impresoras: {[i['nombre'] for i in listar_impresoras()] or 'ninguna'}")
+
+    sale = bool(PANEL_URL)
+    if PANEL_URL and not SERVICIO_ID:
+        print(
+            "AVISO: hay PANEL_URL pero falta SERVICIO_ID, así que NO se va a buscar trabajo al panel.\n"
+            "       El id de esta computadora sale en el panel, en Ajustes → Servicios de impresión.",
+            file=sys.stderr,
+        )
+        sale = False
+
+    if args.sin_servidor:
+        if not sale:
+            print("No hay nada que hacer: --sin-servidor sin PANEL_URL (y SERVICIO_ID) válidos.", file=sys.stderr)
+            sys.exit(1)
+        try:
+            trabajar_con_el_panel()
+        except KeyboardInterrupt:
+            print("\nHasta luego.")
+        return
+
+    if sale:
+        # Demonio: si el bucle se queda colgado en una espera, cerrar el programa no tiene que
+        # depender de que esa espera termine.
+        threading.Thread(target=trabajar_con_el_panel, name="cola", daemon=True).start()
 
     http = ThreadingHTTPServer((args.escuchar, args.puerto), _manejador())
     http.daemon_threads = True

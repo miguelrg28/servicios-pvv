@@ -7,8 +7,21 @@ facturas en carta) y tickets de factura en crudo para impresoras de recibos (Sta
 Es independiente: no necesita nada más de este repositorio ni de ningún otro. Una empresa que solo
 quiera imprimir instala **solo esta carpeta**.
 
-La dirección es **el panel llama aquí**, por la red privada (ZeroTier): este servicio escucha en
-la IP de ZeroTier del equipo y no hay que abrir ningún puerto a internet.
+Hay **dos formas de conectarlo**, y conviene elegir antes de empezar:
+
+| | **A — esta computadora llama al panel** | **B — el panel llama aquí** |
+|---|---|---|
+| Qué hace | Sale a buscar lo que haya que imprimir | Se queda escuchando en un puerto |
+| Necesita | Nada: la salida a internet que ya tiene | Que el panel la alcance → **ZeroTier** |
+| Hay que abrir | Nada | El puerto 8766 en el cortafuegos |
+| Para qué | **Una caja**, una computadora del mostrador | El servidor del taller, que ya está en esa red |
+
+**En una caja usa la A.** Imprimir un ticket no es motivo para meter la computadora del mostrador
+en la red privada donde viven el ERP y la base de datos: si esa máquina se infecta —y es la que
+más manos toca—, desde ahí se llega a todo lo demás. Saliendo no hay nada abierto y nada que
+vigilar.
+
+La **B** es la de siempre y sigue bien donde la máquina ya está en esa red por otros motivos.
 
 **Qué papel sale y a qué hora NO se configura aquí.** Eso vive en el panel. Este programa no sabe
 ni qué día es: solo imprime lo que le llega.
@@ -80,7 +93,30 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 - Si falta o mide menos de 20 caracteres, el servicio responde **503** a todo: una variable
   olvidada cierra la puerta, no la abre.
 
-En el `.env` de este servidor:
+### Forma A — esta computadora llama al panel
+
+Primero en el panel, entrando con la empresa dueña del equipo: **Ajustes → Servicios de impresión →
+«+ Agregar una computadora»**:
+
+- **Nombre:** cómo la conoce la gente («Caja 1»).
+- **¿Quién llama a quién?:** *Ella llama al panel*.
+- **Clave:** la que se generó arriba.
+
+Al guardar, la pantalla enseña debajo del nombre el **`SERVICIO_ID`** de esa computadora. Con eso,
+el `.env` de aquí:
+
+```
+IMPRESORA_TOKEN=...
+PANEL_URL=https://miempresa.perspectivve.com   ← la misma dirección que se abre en el navegador
+SERVICIO_ID=a1b2c3d4e5                         ← el que enseña la pantalla
+# SUMATRA_EXE=...                              ← solo si SumatraPDF.exe no está en esta carpeta
+```
+
+No hace falta tocar el cortafuegos (sección 4) ni ZeroTier. Con `PANEL_URL` puesto, el servicio
+solo escucha en `127.0.0.1`, así que tampoco deja nada abierto a la red de la tienda; si no se
+quiere ni eso, `IMPRESORA_SERVIDOR=0` lo apaga del todo.
+
+### Forma B — el panel llama aquí (ZeroTier)
 
 ```
 IMPRESORA_TOKEN=...
@@ -89,14 +125,19 @@ IMPRESORA_PUERTO=8766
 # SUMATRA_EXE=...                 ← solo si SumatraPDF.exe no está en esta carpeta
 ```
 
-Y en el panel, entrando con la empresa dueña de este equipo: **Ajustes → Servicios de impresión →
-«+ Agregar una computadora»**:
+Y en el panel, **Ajustes → Servicios de impresión → «+ Agregar una computadora»**:
 
-- **Nombre:** cómo la conoce la gente («Caja 1», «Servidor del taller»).
+- **Nombre:** cómo la conoce la gente («Servidor del taller»).
+- **¿Quién llama a quién?:** *El panel la llama*.
 - **Dirección:** `10.147.x.x:8766` (la IP de ZeroTier de este equipo y el puerto).
 - **Clave:** la misma `IMPRESORA_TOKEN` de arriba.
 
+### Las dos
+
 Guardar y pulsar **«Probar»**: tiene que decir «Contesta …». No hace falta reiniciar el panel.
+En la forma A, «Probar» no llama a nadie —no puede—: contesta con lo último que dijo esta
+computadora al ponerse a esperar, así que hay que tener el servicio corriendo y darle unos
+segundos tras arrancarlo.
 Si la empresa tiene varias computadoras, la marcada **«Por defecto»** es la que usan las
 impresiones programadas; en cada impresora de factura se puede elegir otra.
 
@@ -104,7 +145,11 @@ impresiones programadas; en cada impresora de factura se puede elegir otra.
 > `IMPRESORA_URL` / `IMPRESORA_TOKEN` de su `.env` como respaldo. Aparece en la lista como
 > «Servidor del taller (.env)». Ninguna otra empresa puede usar ese respaldo.
 
-## 4. Abrir el puerto en el cortafuegos de Windows (solo para ZeroTier)
+## 4. Abrir el puerto en el cortafuegos de Windows (solo en la forma B)
+
+> En la forma A **sáltate esta sección entera**: no hay ningún puerto que abrir, que es justamente
+> la gracia.
+
 
 Arrancado desde el Programador de tareas no sale el aviso de «Permitir acceso», así que Windows
 bloquea las peticiones del panel en silencio. En una consola **como administrador**:
@@ -122,8 +167,19 @@ cerrado para la red local y para cualquier otra.
 venv\Scripts\python impresora.py
 ```
 
-Al arrancar dice el nombre del equipo y **las impresoras que ve**. Desde el propio equipo, en
-otra consola:
+Al arrancar dice el nombre del equipo y **las impresoras que ve**.
+
+En la **forma A** tiene que salir además:
+
+```
+[impresora] Esperando trabajo de https://miempresa.perspectivve.com como «a1b2c3d4e5»...
+```
+
+Si en vez de eso aparece *«El panel rechazó la credencial (401)»*, la clave o el `SERVICIO_ID` no
+coinciden con los de Ajustes → Servicios de impresión. Si aparece *«Sin conexión con el panel»*,
+es la dirección de `PANEL_URL` o la salida a internet del equipo.
+
+En la **forma B**, desde el propio equipo, en otra consola:
 
 ```bat
 curl -H "Authorization: Bearer EL_TOKEN" http://127.0.0.1:8766/salud

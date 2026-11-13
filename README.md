@@ -10,7 +10,7 @@ placas de Villa Lubri) sigue en su propio repositorio (`bridge-punch-villalubri`
 
 | Carpeta | Qué hace | Guía |
 |---|---|---|
-| [`impresora/`](impresora/) | Saca por las impresoras del equipo lo que manda el panel, sin ventanas: PDF y tickets de factura en crudo (Star, ESC/POS). | [INSTALACION.md](impresora/INSTALACION.md) |
+| [`impresora/`](impresora/) | Saca por las impresoras del equipo lo que manda el panel, sin ventanas: PDF y tickets de factura en crudo (Star, ESC/POS). Puede **salir a buscar** el trabajo al panel, sin red privada ni puertos abiertos. | [INSTALACION.md](impresora/INSTALACION.md) |
 
 ## Reglas para todo lo que se agregue aquí
 
@@ -23,3 +23,8 @@ placas de Villa Lubri) sigue en su propio repositorio (`bridge-punch-villalubri`
    una variable olvidada cierra la puerta, no la abre.
 4. **Lo que se decide, se decide en el panel.** Estos programas ejecutan; los horarios, las
    impresoras de cada caja y las reglas viven en el panel, donde se ven y se cambian.
+5. **Preferir salir antes que escuchar.** Si el panel tiene que alcanzar la computadora, esa
+   computadora acaba en una red privada con el ERP y la base de datos para poder imprimir un
+   papel. Saliendo no hay puerto abierto, ni regla de cortafuegos, ni red que vigilar — y la
+   computadora que menos se controla, la de la caja, es justo la que no debe tener alcance a todo
+   lo demás.

@@ -125,9 +125,16 @@ La guía completa, con todos los comandos, está en
 
 1. Instalar Python y bajar este repositorio en `C:\servicios-pvv`.
 2. Preparar la carpeta `impresora` (su venv y su archivo `.env` con la **clave**).
-3. En el panel, **Ajustes → Servicios de impresión**, agregar esta computadora con su dirección
-   de ZeroTier y la misma **clave**, y pulsar **"Probar"**. Cada computadora tiene **su propia
-   clave**, y cada empresa ve y usa solo las suyas.
+3. En el panel, **Ajustes → Servicios de impresión**, agregar esta computadora con la misma
+   **clave** y pulsar **"Probar"**. Cada computadora tiene **su propia clave**, y cada empresa ve
+   y usa solo las suyas.
+
+   Ahí se elige **quién llama a quién**:
+   - **"Ella llama al panel"** (lo normal, y lo que hay que usar en una caja): la computadora sale
+     a buscar lo que haya que imprimir. No hace falta ZeroTier ni abrir nada. En su `.env` se
+     ponen `PANEL_URL` y el `SERVICIO_ID` que enseña la pantalla.
+   - **"El panel la llama"**: hace falta que esa computadora esté en ZeroTier y se pone su
+     dirección. Úsalo solo donde ya esté en esa red, como el servidor del taller.
 4. Dejarlo prendido solo con el **Programador de tareas**.
 5. En el panel, **Ajustes → Impresión de facturas**, elegir **"Por el servicio de impresión"**, la
    **computadora** y el
