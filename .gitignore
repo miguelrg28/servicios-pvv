@@ -1,0 +1,10 @@
+# Los secretos de cada instalación. Nunca al repositorio.
+.env
+
+# Lo que se genera o se baja en cada equipo.
+venv/
+__pycache__/
+*.pyc
+*.log
+SumatraPDF.exe
+.DS_Store

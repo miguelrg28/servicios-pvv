@@ -1,0 +1,4 @@
+# Solo hace falta en Windows: para LISTAR las impresoras y para mandar los tickets en crudo
+# (Star SP500, Epson TM… → /imprimir-crudo). Los PDF los imprime SumatraPDF.
+# Sin esto los PDF salen igual, pero el panel no puede ofrecer la lista ni imprimir tickets en crudo.
+pywin32>=306; sys_platform == "win32"

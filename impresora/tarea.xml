@@ -1,0 +1,81 @@
+<?xml version="1.0"?>
+<!--
+  Tarea programada del servicio de impresion (servicios-pvv).
+
+  Las rutas de abajo (Command y WorkingDirectory) asumen C:\servicios-pvv. Si se instala en otra
+  carpeta, cambiarlas ANTES de registrar la tarea: el Programador de tareas no acepta rutas
+  relativas.
+
+  Registrar en el servidor, en PowerShell COMO ADMINISTRADOR:
+    Register-ScheduledTask -TaskName "Servicio de impresion PVV" -Force `
+      -Xml (Get-Content C:\servicios-pvv\impresora\tarea.xml -Raw)
+
+  Corre como LOCAL SERVICE (S-1-5-19): arranca aunque nadie haya
+  iniciado sesion, no guarda ninguna contrasena y no necesita privilegios altos. Necesita escribir
+  en su carpeta (impresora.log) y en el temporal del sistema (el PDF que se manda a imprimir, que
+  se borra siempre):
+    icacls C:\servicios-pvv /grant "LOCAL SERVICE:(OI)(CI)M"
+
+  OJO con las impresoras: LOCAL SERVICE ve las impresoras LOCALES de la maquina, no las que un
+  usuario haya conectado en SU sesion. Si la impresora esta conectada como impresora de red de un
+  usuario, hay que instalarla como local (por IP) o la tarea no la encuentra, aunque a mano
+  funcione. Eso se ve enseguida: GET /impresoras no la lista.
+
+  No es un ciclo cada 15 minutos: el servicio se queda escuchando. Por eso arranca con el equipo,
+  no tiene limite de tiempo, y correr.bat lo relanza si se cae. La hora a la que sale cada papel la
+  decide el PANEL, no esta tarea.
+
+  La declaracion de arriba NO lleva encoding="UTF-8" a proposito: -Xml recibe el texto como
+  cadena de PowerShell (UTF-16) y con esa declaracion falla. El archivo es todo ASCII.
+-->
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Imprime lo que le manda el panel (por ZeroTier): PDF y tickets en crudo. No decide que ni cuando: eso lo programa el panel.</Description>
+    <URI>\Servicio de impresion PVV</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <BootTrigger>
+      <Enabled>true</Enabled>
+      <!-- Un minuto de margen para que ZeroTier tenga su IP; si aun no, correr.bat reintenta. -->
+      <Delay>PT1M</Delay>
+    </BootTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>S-1-5-19</UserId>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <!-- Una sola copia: dos no pueden escuchar en el mismo puerto. -->
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <!-- Sin limite: es un servidor, no un ciclo. -->
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <!-- Prioridad por debajo de lo normal: lo demas de la maquina va primero. -->
+    <Priority>8</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>999</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>C:\servicios-pvv\impresora\correr.bat</Command>
+      <WorkingDirectory>C:\servicios-pvv\impresora</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
