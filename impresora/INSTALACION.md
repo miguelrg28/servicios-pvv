@@ -197,7 +197,13 @@ como administrador**:
 
 ```powershell
 # Permiso de escritura en la carpeta (impresora.log)
-icacls C:\servicios-pvv /grant "LOCAL SERVICE:(OI)(CI)M"
+# Dos trampas en una sola línea:
+#  · La cuenta se nombra por su SID y no por su nombre: en un Windows en español LOCAL SERVICE
+#    se llama SERVICIO LOCAL, y con el nombre en inglés icacls contesta «se procesaron
+#    correctamente 0 archivos». S-1-5-19 es la misma cuenta en cualquier idioma.
+#  · Las comillas NO sobran: en PowerShell los paréntesis abren una llamada a un comando, así
+#    que sin ellas contesta «El término 'OI' no se reconoce como nombre de un cmdlet».
+icacls C:\servicios-pvv /grant "*S-1-5-19:(OI)(CI)M"
 
 Register-ScheduledTask -TaskName "Servicio de impresion PVV" -Force `
   -Xml (Get-Content C:\servicios-pvv\impresora\tarea.xml -Raw)
@@ -207,6 +213,19 @@ Start-ScheduledTask -TaskName "Servicio de impresion PVV"
 
 Lo que imprime el servicio va a `impresora.log` en esta carpeta: ahí se ve qué papel salió y a qué
 hora.
+
+> **«Running» es la tarea, no el servicio.** Si el `icacls` de arriba falló, LOCAL SERVICE no puede
+> escribir `impresora.log`, y como `correr.bat` manda ahí toda su salida, el Python no llega ni a
+> arrancar: la tarea sale `Running` y reintenta cada 30 segundos sin dejar rastro. La comprobación
+> buena es que el archivo exista y crezca:
+>
+> ```powershell
+> Get-Content C:\servicios-pvv\impresora\impresora.log -Tail 20
+> ```
+>
+> Tiene que decir el nombre del equipo, las impresoras que ve y, en la forma A, «Conectado al panel
+> de … como …». Después del `icacls` hay que reiniciar la tarea (`Stop-ScheduledTask` y
+> `Start-ScheduledTask`) para que lo coja.
 
 > ### ⚠️ La trampa de LOCAL SERVICE y las impresoras
 >
