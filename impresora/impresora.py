@@ -59,7 +59,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.3"
+VERSION = "1.3.1"
 AQUI = Path(__file__).resolve().parent
 
 # Un PDF de una hoja pesa 100 kB. El tope está por si alguien manda un documento de doscientas
@@ -179,6 +179,19 @@ def imprimir_pdf(ruta: Path, impresora: str, copias: int) -> tuple[bool, str]:
                 f"No encuentro SumatraPDF en «{SUMATRA}». Déjalo en la carpeta del servicio o "
                 "pon su ruta en SUMATRA_EXE."
             )
+        # Que la impresora exista con ESE nombre exacto. Si no, Sumatra solo devuelve 1 y no dice
+        # por qué; aquí se dice cuál falta y cuáles hay, que es lo que hace falta para corregirlo.
+        if impresora:
+            hay = [p["nombre"] for p in listar_impresoras()]
+            if hay and impresora not in hay:
+                parecida = next((n for n in hay if n.lower() == impresora.lower()), None)
+                if parecida:
+                    impresora = parecida
+                else:
+                    return False, (
+                        f"No hay ninguna impresora llamada «{impresora}» en este equipo. "
+                        f"Las que hay: {', '.join(hay)[:300]}. Elige una en Ajustes con «Ver sus impresoras»."
+                    )
         destino = ["-print-to", impresora] if impresora else ["-print-to-default"]
         for _ in range(copias):
             r = subprocess.run(
@@ -186,9 +199,16 @@ def imprimir_pdf(ruta: Path, impresora: str, copias: int) -> tuple[bool, str]:
                 capture_output=True, text=True, timeout=120,
             )
             if r.returncode != 0:
+                # Sumatra escribe su registro de cómo leyó la orden («ParseFlags: …»): no es el error
+                # y tapaba el mensaje de verdad. Se quita para que se vea lo que importa.
+                detalle = " ".join(
+                    l.strip() for l in (r.stderr or r.stdout or "").splitlines()
+                    if l.strip() and not l.strip().startswith("ParseFlags")
+                )
                 return False, (
-                    f"SumatraPDF devolvió {r.returncode}. "
-                    f"{(r.stderr or r.stdout or '').strip()[:160]}"
+                    f"SumatraPDF no pudo imprimir en «{impresora or 'la de por defecto'}» (código {r.returncode}). "
+                    + (detalle[:200] if detalle else
+                       "Suele ser que el controlador de esa impresora no está bien instalado o no acepta el tamaño del papel.")
                 )
         return True, impresora or "(la de por defecto)"
 
